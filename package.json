@@ -1,0 +1,17 @@
+{
+    "name": "ts-wasm",
+    "version": "1.0.0",
+    "description": "TEST AssemblyScript Peft TS -> WASM",
+    "main": "test/index.html",
+    "scripts": {
+        "start": "npm run build:wasm",
+        "poststart": "http-server test -o",
+        "build:wasm": "asc rotate.ts -b test/assemblyscript.wasm --validate -O3"
+    },
+    "keywords": [],
+    "author": "Daniele Morosinotto <d.morosinotto@icloud.com>",
+    "license": "MIT",
+    "dependencies": {
+        "assemblyscript": "github:AssemblyScript/assemblyscript"
+    }
+}

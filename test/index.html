@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<style>
+    canvas,
+    img {
+        width: 128px;
+        height: 128px;
+    }
+</style>
+<h1>Performance test</h1>
+<button id="go">Go</button>
+<script type="module">
+    import { rotate } from "./rotate.js";
+
+    let NUM_ITERS = 10000;
+    let IMAGE_SIZE = 512;
+    if (location.search.includes("single")) {
+        NUM_ITERS = 1;
+        IMAGE_SIZE = 4096;
+    }
+
+    function showResult(buffer, width, height, textContent) {
+        const div = document.createElement("div");
+        div.appendChild(Object.assign(document.createElement("h1"), { textContent }));
+        const canvas = document.createElement("canvas");
+        Object.assign(canvas, { width, height });
+        const resultData = new Uint8ClampedArray(buffer, width * height * 4, width * height * 4);
+        const ctx = canvas.getContext("2d");
+        ctx.putImageData(new ImageData(resultData, width, height), 0, 0);
+        div.appendChild(canvas);
+        document.body.appendChild(div);
+    }
+
+    async function measure(cb) {
+        const timings = [];
+        for (let i = 0; i < NUM_ITERS; i++) {
+            const start = performance.now();
+            cb();
+            timings.push(performance.now() - start);
+        }
+        timings.sort((a, b) => a - b);
+        const sum = timings.reduce((sum, v) => sum + v);
+        const avg = sum / timings.length;
+        const stddev = timings.map(v => Math.pow(v - avg, 2)).reduce((sum, v) => sum + v) / (timings.length - 1);
+        const p90 = timings[Math.floor(timings.length * 0.9)];
+        const p95 = timings[Math.floor(timings.length * 0.95)];
+        const p99 = timings[Math.floor(timings.length * 0.99)];
+        return { avg, stddev, p90, p95, p99 };
+    }
+
+    async function init() {
+        const img = new ImageData(new Uint8ClampedArray(IMAGE_SIZE * IMAGE_SIZE * 4), IMAGE_SIZE, IMAGE_SIZE);
+        const pixelview = new Uint32Array(img.data.buffer);
+        pixelview.fill(0xff000000);
+        for (let x = 0; x < IMAGE_SIZE; x++) {
+            pixelview[x * IMAGE_SIZE + x] = 0xff0000ff;
+            pixelview[x * IMAGE_SIZE + (IMAGE_SIZE - x)] = 0xff00ff00;
+        }
+
+        const bytesPerImage = img.width * img.height * 4;
+        const minimumMemorySize = bytesPerImage * 2 + 4;
+        const pagesNeeded = Math.ceil(minimumMemorySize / (64 * 1024));
+
+        console.log(`Operating on a ${IMAGE_SIZE}px x ${IMAGE_SIZE}px image`);
+        console.log(`Running rotate() ${NUM_ITERS} times each`);
+        // Benchmark JS
+        {
+            const buffer = new ArrayBuffer(bytesPerImage * 2);
+            new Uint8ClampedArray(buffer).set(img.data);
+
+            console.log("%c JavaScript", "font-size: 2em");
+            console.log(
+                await measure(() => {
+                    rotate(buffer, img.width, img.height, 90);
+                })
+            );
+            showResult(buffer, img.width, img.height, "JavaScript");
+        }
+
+        //TODO: STUDIARE QUESTO CODICE PER CAPIRE COME PASSARE OGGETTI/MEMORIA TRA JS <-->> WASM
+        for (const language of ["assemblyscript" /*, "c", , "rust"*/]) {
+            let memory = new WebAssembly.Memory({ initial: 256 });
+            const { instance } = await WebAssembly.instantiate(
+                await fetch(`/${language}.wasm`).then(r => r.arrayBuffer()),
+                {
+                    env: { memory }
+                }
+            );
+            if (instance.exports.memory) {
+                memory = instance.exports.memory;
+            }
+            memory.grow(pagesNeeded);
+            new Uint8ClampedArray(memory.buffer, 4).set(img.data);
+            console.log(`%c ${language}`, "font-size: 2em");
+            console.log(
+                await measure(() => {
+                    (instance.exports.a || instance.exports.rotate)(img.width, img.height, 90);
+                })
+            );
+            showResult(memory.buffer, img.width, img.height, language);
+        }
+    }
+    document.all.go.onclick = init;
+</script>
